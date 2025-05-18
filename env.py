@@ -1,0 +1,438 @@
+"""
+import gymnasium as gym
+import numpy as np
+#from apscheduler.schedulers.background import BackgroundScheduler
+from rcl_interfaces.msg import ParameterDescriptor, ParameterType
+from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
+
+from at_dynamics.at_dynamics.dynamics import Dynamics
+from at_messages.msg import DynamicsState, TargetThrust
+from at_utils.ros_utils import nan_dynamics_state
+
+class PoolEnv(gym.Env):
+    def __init__(self, node: Node, max_steps=600):
+        self.max_steps = max_steps
+        self.step_cnt = 0
+
+        self.num_thrusters = (
+            np.array(
+                node.declare_parameter(
+                    "thruster_positions",
+                    descriptor=ParameterDescriptor(type=ParameterType.PARAMETER_DOUBLE_ARRAY),
+                ).value,
+                dtype=np.float64,
+            )
+            .reshape((-1, 3))
+            .shape[0]
+        )
+
+        self.max_velocity = np.array(
+            node.declare_parameter(
+                "max_velocity",
+                descriptor=ParameterDescriptor(type=ParameterType.PARAMETER_DOUBLE_ARRAY),
+            ).value,
+            dtype=np.float64,
+        )
+
+        self.sliding_window_size = 100
+        self.sliding_window = np.empty((0, self.num_thrusters))
+
+        self.target_sub = node.create_subscription(
+            DynamicsState, "/dynamics/target", self.target_callback, qos_profile_sensor_data
+        )
+        self.state_sub = node.create_subscription(
+            DynamicsState, "/dynamics/state", self.state_callback, qos_profile_sensor_data
+        )
+
+        self.target_thrust_pub = node.create_publisher(TargetThrust, "/thrusters/target_thrust", 10)
+
+        self.last_action = np.zeros((self.num_thrusters,))
+        self.state = nan_dynamics_state()
+        self.target_state = nan_dynamics_state()
+
+        self.observation_space = gym.spaces.Dict(
+            {
+                "velocities": gym.spaces.Box(low=0, high=self.max_velocity, shape=(6,)),
+                "errors": gym.spaces.Box(low=-np.inf, high=np.inf, shape=(6,)),
+                "last action": gym.spaces.Box(
+                    low=-np.inf, high=np.inf, shape=(self.num_thrusters,)
+                ),
+            }
+        )
+
+        # TODO: check if we need to bound the thrust
+        self.action_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(self.num_thrusters,))
+
+    def target_callback(self, target: DynamicsState):
+        self.target_state = target
+
+    def state_callback(self, state: DynamicsState):
+        self.state = state
+
+        # zero out target if it is too old
+        # if self.last_target_time is None or cur_time - self.last_target_time > self.target_lifetime:
+        #     self.target_state = nan_dynamics_state()
+
+    def _get_obs(self):
+        return {
+            "velocities": self.state.velocity,
+            "errors": self.state.velocity - self.target_state.velocity,
+            "last_action": self.last_action,
+        }
+
+    def _get_reward(self, action):
+        # these numbers are taken from the simulation section of the paper
+        alpha = 1
+        lambda_ = 0.75
+        zeta = 0.1
+        xi = 0.4
+
+        error = self.state.velocity - self.target_state.velocity
+        scales = np.ones((6,))  # TODO: check if this is correct
+        square_error = error @ np.diag(scales) @ error
+
+        thruster_usage = np.sum(np.abs(action))
+
+        sudden_change_penalty = np.linalg.norm(np.mean(self.sliding_window, axis=0) - action)
+
+        reward = (
+            lambda_ * np.exp(-1 / (alpha**2) * square_error)
+            - zeta * thruster_usage
+            - xi * sudden_change_penalty
+        )
+
+        return reward
+
+    def _get_info(self):
+        # do we have any auxiliary information?
+        return None
+
+    def step(self, action):
+        self.target_thrust_pub.publish(action)
+
+        self.step_cnt += 1
+
+        observation = self._get_obs()
+        terminated = False
+        truncated = self.step_cnt > self.max_steps
+        reward = self._get_reward()
+        info = self._get_info()
+
+        self.sliding_window = np.vstack([self.sliding_window, action])
+        if self.sliding_window.shape[0] > self.sliding_window_size:
+            self.sliding_window = np.delete(self.sliding_window, 0, axis=0)
+
+        self.last_action = action
+
+        return observation, reward, terminated, truncated, info
+
+    def reset(self, seed=None, options=None):
+        super().reset(seed=seed)
+"""
+
+import os
+
+import gymnasium as gym
+import numpy as np
+from dynamics import Dynamics
+from matplotlib import pyplot as plt
+
+
+def get_dynamics():
+    robot = "arctos"
+
+    gravity = 9.81
+    water_density = 1.0
+
+    mass = 38.0
+    displacement = 39.0
+    displacement_radius = 0.3
+
+    center_of_mass = np.array([-0.0011, -0.0004, -0.0369], dtype=np.float64)
+    center_of_buoyancy = np.array([-0.0001, -0.0003, -0.0571], dtype=np.float64)
+
+    moments_of_inertia = np.array([2.0690, 1.6031, 2.3423], dtype=np.float64)
+    products_of_inertia = np.array([-0.0094, -0.0734, -0.0079], dtype=np.float64)
+
+    # Xu, Yv, Zw, Kp, Mq, Nr
+    damping = np.array([-100.0, -100.0, -200.0, -20.0, -20.0, -20.0], dtype=np.float64)
+    # Xuu, Yvv, Zww, Kpp, Mqq, Nrr
+    quadratic_damping = np.array([-100.0, -100.0, -200.0, -10.0, -10.0, -10.0], dtype=np.float64)
+
+    # mass_ratio = added mass / mass
+    mass_ratio = 0.5
+
+    thruster_positions = np.array(
+        [
+            0.008,
+            -0.272,
+            -0.052,
+            0.008,
+            0.272,
+            -0.052,
+            0.000,
+            -0.002,
+            -0.238,
+            0.000,
+            -0.008,
+            0.200,
+            -0.251,
+            -0.236,
+            0.042,
+            -0.251,
+            0.236,
+            0.042,
+            0.251,
+            -0.236,
+            0.042,
+            0.251,
+            0.236,
+            0.042,
+        ],
+        dtype=np.float64,
+    ).reshape((-1, 3))
+
+    # 3D unit vector (i,j,k) for thruster orientation
+    # a positive value indicates the direction of net force caused by thrust
+    thruster_directions = np.array(
+        [
+            1.0,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            -1.0,
+            0.0,
+            0.0,
+            -1.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            1.0,
+        ]
+    ).reshape((-1, 3))
+
+    # thruster reaction delay
+    thruster_taus = np.array([0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2], dtype=np.float64)
+
+    # random noise added to the velocity
+    velocity_noise = np.array([0.1, 0.1, 0.1, 0.2, 0.2, 0.2], dtype=np.float64)
+    water_level: float = 0.0
+
+    dynamics = Dynamics(
+        gravity,
+        water_density,
+        water_level,
+        mass,
+        center_of_mass,
+        moments_of_inertia,
+        products_of_inertia,
+        displacement,
+        displacement_radius,
+        center_of_buoyancy,
+        damping,
+        quadratic_damping,
+        mass_ratio,
+        thruster_positions,
+        thruster_directions,
+        thruster_taus,
+        velocity_noise,
+        np.zeros(6),  # TODO: Check if this is correct
+        np.zeros(6),
+    )
+    return dynamics
+
+
+class PoolEnvTrain(gym.Env):
+
+    def __init__(self, max_steps=700, lambda_=1, zeta=0.05, xi=0.2, n_sim_steps_per_action=10):
+        self.period = 1 / 100
+        # self.scheduler = BackgroundScheduler()
+        # self.job = None
+        self.max_steps = max_steps
+        self.step_cnt = 0
+        self.num_thrusters = 8
+        self.max_velocity = np.array([0.5, 0.5, 0.5, 1.0, 1.0, 0.7], dtype=np.float32)
+        self.n_sim_steps_per_action = n_sim_steps_per_action
+        self.sliding_window_size = 100
+        self.dynamics = None
+        self.target_state = np.zeros(6)
+        self.lambda_ = lambda_
+        self.zeta = zeta
+        self.xi = xi
+        self.observation_space = gym.spaces.Dict(
+            {
+                "acceleration": gym.spaces.Box(low=-np.inf, high=np.inf, shape=(6,)),
+                "velocities": gym.spaces.Box(
+                    low=-self.max_velocity, high=self.max_velocity, shape=(6,)
+                ),
+                "errors": gym.spaces.Box(low=-np.inf, high=np.inf, shape=(6,)),
+                # "last_action": gym.spaces.Box(
+                #     low=-np.inf, high=np.inf, shape=(self.num_thrusters,)
+                # ),
+            }
+        )
+
+        # TODO: check if we need to bound the thrust
+        self.action_space = gym.spaces.Box(low=-60, high=60, shape=(self.num_thrusters,))
+
+        self.target_state = self.max_velocity / 2
+
+        self.last_episode = {}
+        self.curr_episode_velocities = np.empty((0, 6))
+        self.curr_episode_thrusts = np.empty((0, 8))
+
+        self.dynamics = get_dynamics()
+
+    def _get_obs(self):
+        return {
+            "acceleration": np.array(self.dynamics.acceleration, dtype=np.float32),
+            "velocities": np.array(self.dynamics.velocity, dtype=np.float32),
+            "errors": np.array(self.dynamics.velocity, dtype=np.float32)
+            - np.array(self.target_state, dtype=np.float32),
+            # "last_action": np.array(self.last_action, dtype=np.float32),
+        }
+
+    def _get_reward(self, action):
+        alpha = 1
+        error = self.dynamics.velocity - self.target_state
+        scales = np.ones((6,))  # TODO: check if this is correct
+        square_error = error @ np.diag(scales) @ error
+        thruster_usage = np.sum(np.abs(action))
+        sudden_change_penalty = np.linalg.norm(
+            np.mean(self.sliding_window[: min(self.sliding_window_size, self.step_cnt + 1)], axis=0)
+            - action
+        )
+        reward = (
+            self.lambda_ * np.exp(-1 / (alpha**2) * square_error)
+            - self.zeta * thruster_usage
+            - self.xi * sudden_change_penalty
+        )
+        return reward
+
+    """
+    def _get_reward(self, action):
+        # print(action)
+        return -np.linalg.norm(self.dynamics.velocity - self.target_state) - 0.1 * np.linalg.norm(
+            action - self.last_action
+        )
+    """
+
+    def _get_info(self):
+        # do we have any auxiliary information?
+        return {}
+
+    def step(self, action):
+        self.dynamics.target_thrust = action
+        # print("Action:")
+        # print(action)
+        self.curr_episode_velocities = np.vstack(
+            (self.curr_episode_velocities, self.dynamics.velocity)
+        )
+
+        self.curr_episode_thrusts = np.vstack((self.curr_episode_thrusts, action))
+
+        for _ in range(self.n_sim_steps_per_action):
+            self.dynamics.update(self.period)
+
+        # print("Velocity:")
+        # print(self.dynamics.velocity)
+        self.sliding_window[self.step_cnt % self.sliding_window_size] = action
+
+        observation = self._get_obs()
+        terminated = False
+        truncated = self.step_cnt > self.max_steps
+        reward = self._get_reward(action)
+        info = self._get_info()
+
+        self.last_action = action
+
+        self.step_cnt += 1
+
+        return observation, reward, terminated, truncated, info
+
+    """
+    def reset(self, seed=None, options=None):
+        super().reset(seed=seed)
+
+        if self.job:
+            self.scheduler.remove_job(self.job.id)
+        self.init_dynamics()
+        # ask Sergii about setting initial velocities and thrust
+        for i in range(np.random.randint(low=0, high=25)):
+            self.dynamics.update(0.1)
+
+        # ideally should be the time difference between previous and current updates
+        self.job = self.scheduler.add_job(
+            lambda _: self.dynamics.update(self.period), "interval", seconds=self.period
+        )
+
+        self.target_state = np.random.uniform(np.zeros(6), self.max_velocity)
+    """
+
+    def reset(self, seed=None, options=None):
+        """
+        if self.dynamics:
+            print("-" * 20)
+            print(self.target_state)
+            print(self.dynamics.velocity)
+            print("-" * 20)
+        """
+        super().reset(seed=seed)
+        self.last_episode["target"] = self.target_state
+        self.last_episode["velocities"] = self.curr_episode_velocities
+        self.last_episode["thrusts"] = self.curr_episode_thrusts
+        self.curr_episode_velocities = np.empty((0, 6))
+        self.dynamics = get_dynamics()
+        self.step_cnt = 0
+        self.sliding_window = np.zeros((self.sliding_window_size, self.num_thrusters))
+        self.last_action = np.zeros((self.num_thrusters,))
+        self.target_state = np.random.uniform(-self.max_velocity, self.max_velocity)
+        # ask Sergii about setting initial velocities and thrust
+        # for i in range(np.random.randint(low=0, high=25)):
+        #     self.dynamics.update(0.1)
+
+        obs = self._get_obs()
+        return obs, self._get_info()
+
+    def plot_last_episode(self, n):
+        target_vs_velocity_path = "plots/target_vs_velocity"
+        thrust_path = "plots/thrust"
+
+        if not os.path.exists(target_vs_velocity_path):
+            os.makedirs(target_vs_velocity_path)
+        if not os.path.exists(thrust_path):
+            os.makedirs(thrust_path)
+
+        fig, axs = plt.subplots(2, 3)
+        x = np.arange(self.last_episode["velocities"].shape[0])
+
+        for i, ax in enumerate(axs.flat):
+            ax.plot(x, self.last_episode["velocities"][:, i])
+            ax.axhline(self.last_episode["target"][i], color="r")
+            ax.set_ylim([-1, 1])
+
+        plt.savefig(os.path.join(target_vs_velocity_path, f"plot{n}.png"))
+
+        fig, axs = plt.subplots(2, self.num_thrusters // 2)
+        axs.flatten()
+
+        thrust_entries = 20
+        x = np.arange(thrust_entries)
+        for i, ax in enumerate(axs.flat):
+            ax.plot(x, self.last_episode["thrusts"][-thrust_entries:, i])
+            ax.set_ylim([-60, 60])
+
+        plt.savefig(os.path.join(thrust_path, f"plot{n}.png"))
