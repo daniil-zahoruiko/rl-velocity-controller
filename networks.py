@@ -3,6 +3,7 @@ import torch
 
 class ActorNetwork(nn.Module):
     def __init__(self, num_thrusters):
+        super(ActorNetwork, self).__init__()
         self.stack = nn.Sequential(
             nn.Linear(18 + num_thrusters, 600),
             nn.ReLU(),
@@ -19,6 +20,7 @@ class ActorNetwork(nn.Module):
 
 class CriticNetwork(nn.Module):
     def __init__(self, num_thrusters):
+        super(CriticNetwork, self).__init__()
         self.num_thrusters = num_thrusters
         self.linear = nn.Linear(18, 600)
         self.stack = nn.Sequential(
