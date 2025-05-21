@@ -2,28 +2,60 @@ from networks import ActorNetwork, CriticNetwork
 from OU import OU
 from dynamics import Dynamics
 import numpy as np
+import torch
+import random
 
 def train(episodes, episode_steps):
     num_thrusters = 8
     max_velocity = np.array([0.5, 0.5, 0.5, 1.0, 1.0, 0.7], dtype=np.float32)
+    period = 0.1
+    min_buf_size = 4
+    max_buf_size = 200000
+    beta = 0.001
+    gamma = 0.99
+    N=2
+    replay_buffer = []
 
     actor = ActorNetwork(num_thrusters=num_thrusters)
     critic = CriticNetwork(num_thrusters=num_thrusters)
-    goal_actor = ActorNetwork(num_thrusters=num_thrusters)
-    goal_critic = CriticNetwork(num_thrusters=num_thrusters)
+    target_actor = ActorNetwork(num_thrusters=num_thrusters)
+    target_critic = CriticNetwork(num_thrusters=num_thrusters)
 
-    noise = OU(scale=0.02, mean=np.zeros(shape=(num_thrusters, )), variance=0.09)
+    noise = OU(scale=0.02, mean=np.zeros(shape=(num_thrusters, ), dtype=np.float32), variance=0.09)
     for e in range(episodes):
 
         noise.reset()
         dynamics = get_dynamics()
 
-        target = np.random.uniform(-max_velocity, max_velocity)
+        target = torch.from_numpy(np.random.uniform(-max_velocity, max_velocity)).to(torch.float32)
         # state is velocities, accelerations, last action, errors 
-        state = np.zeros(shape=(18 + num_thrusters, ))
+        state = np.zeros(shape=(18 + num_thrusters, ), dtype=np.float32)
         state[-6:] = np.copy(target)
+        state = torch.from_numpy(state)
         for t in range(episode_steps):
-            pass
+            action = actor(state) + noise.sample()
+
+            dynamics.target_thrust = action.detach().numpy()
+            dynamics.update(period)
+
+            if len(replay_buffer) > min_buf_size:
+                transitions = random.sample(replay_buffer, N)
+                targets = torch.tensor([])
+                for transition in transitions:
+                    next_action = target_actor(transition[3])
+                    torch.concatenate((targets, transition[2] + gamma * target_critic(torch.concatenate((transition[3], next_action)))))
+
+                # TODO: update weights
+
+            velocity = torch.from_numpy(dynamics.velocity).to(torch.float32)
+            next_state = torch.concatenate([velocity, torch.from_numpy(dynamics.acceleration).to(torch.float32), action, target - velocity])
+            replay_buffer.append((state.detach().numpy(), action.detach().numpy(), calculate_reward(next_state), next_state))
+            if len(replay_buffer) > max_buf_size:
+                replay_buffer.pop(0)
+            state = next_state
+
+def calculate_reward(state):
+    pass
 
 def get_dynamics():
     robot = "arctos"
