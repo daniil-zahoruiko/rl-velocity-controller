@@ -22,9 +22,9 @@ def train(episodes, episode_steps):
     target_critic = CriticNetwork(num_thrusters=num_thrusters)
 
     critic_loss_fn = torch.nn.MSELoss()
-    critic_optimizer = torch.optim.Adam()
+    critic_optimizer = torch.optim.Adam(critic.parameters())
 
-    actor_optimizer = torch.optim.Adam()
+    actor_optimizer = torch.optim.Adam(actor.parameters())
 
     noise = OU(scale=0.02, mean=np.zeros(shape=(num_thrusters, ), dtype=np.float32), variance=0.09)
     for e in range(episodes):
@@ -50,7 +50,7 @@ def train(episodes, episode_steps):
                 for transition in transitions:
                     next_action = target_actor(transition[3])
                     torch.concatenate((targets, transition[2] + gamma * target_critic(torch.concatenate((transition[3], next_action)))))
-                    torch.concatenate((outputs, critic(torch.concatenate(transition[0], transition[1]))))
+                    torch.concatenate((outputs, critic(torch.concatenate((transition[0], transition[1])))))
 
                 critic_loss = critic_loss_fn(outputs, targets)
                 critic_optimizer.zero_grad()
@@ -72,7 +72,7 @@ def train(episodes, episode_steps):
 
             velocity = torch.from_numpy(dynamics.velocity).to(torch.float32)
             next_state = torch.concatenate([velocity, torch.from_numpy(dynamics.acceleration).to(torch.float32), action, target - velocity])
-            replay_buffer.append((state.detach().numpy(), action.detach().numpy(), calculate_reward(next_state), next_state))
+            replay_buffer.append((state.detach().numpy(), action.detach().numpy(), calculate_reward(next_state, num_thrusters), next_state))
             if len(replay_buffer) > max_buf_size:
                 replay_buffer.pop(0)
             state = next_state
@@ -83,15 +83,15 @@ def calculate_reward(state, num_thrusters):
     action = state[-(6 + num_thrusters):]
 
     alpha = 1
-    scales = np.ones((6,))  # TODO: check if this is correct
-    square_error = error @ np.diag(scales) @ error
+    scales = torch.ones((6,))  # TODO: check if this is correct
+    square_error = error @ torch.diag(scales) @ error
     # thruster_usage = np.sum(np.abs(action))
     # sudden_change_penalty = np.linalg.norm(
     #     np.mean(self.sliding_window[: min(self.sliding_window_size, self.step_cnt + 1)], axis=0)
     #     - action
     # )
     reward = (
-        np.exp(-1 / (alpha**2) * square_error)
+        torch.exp(-1 / (alpha**2) * square_error)
         # - self.zeta * thruster_usage
         # - self.xi * sudden_change_penalty
     )
