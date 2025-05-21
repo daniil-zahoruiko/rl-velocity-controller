@@ -21,6 +21,11 @@ def train(episodes, episode_steps):
     target_actor = ActorNetwork(num_thrusters=num_thrusters)
     target_critic = CriticNetwork(num_thrusters=num_thrusters)
 
+    critic_loss_fn = torch.nn.MSELoss()
+    critic_optimizer = torch.optim.Adam()
+
+    actor_optimizer = torch.optim.Adam()
+
     noise = OU(scale=0.02, mean=np.zeros(shape=(num_thrusters, ), dtype=np.float32), variance=0.09)
     for e in range(episodes):
 
@@ -41,11 +46,29 @@ def train(episodes, episode_steps):
             if len(replay_buffer) > min_buf_size:
                 transitions = random.sample(replay_buffer, N)
                 targets = torch.tensor([])
+                outputs = torch.tensor([])
                 for transition in transitions:
                     next_action = target_actor(transition[3])
                     torch.concatenate((targets, transition[2] + gamma * target_critic(torch.concatenate((transition[3], next_action)))))
+                    torch.concatenate((outputs, critic(torch.concatenate(transition[0], transition[1]))))
 
-                # TODO: update weights
+                critic_loss = critic_loss_fn(outputs, targets)
+                critic_optimizer.zero_grad()
+                critic_loss.backward()
+                critic_optimizer.step()
+
+                actor_loss = -critic(torch.concatenate((state, actor(state))))
+                actor_optimizer.zero_grad()
+                actor_loss.backward()
+                actor_optimizer.step()
+
+                def soft_update(target_net, source_net):
+                    for target_param, source_param in zip(target_net.parameters(), source_net.parameters()):
+                        target_param.data.copy_(beta * source_param.data + (1 - beta) * target_param.data)
+
+                soft_update(target_actor, actor)
+                soft_update(target_critic, critic)
+
 
             velocity = torch.from_numpy(dynamics.velocity).to(torch.float32)
             next_state = torch.concatenate([velocity, torch.from_numpy(dynamics.acceleration).to(torch.float32), action, target - velocity])
