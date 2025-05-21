@@ -77,8 +77,25 @@ def train(episodes, episode_steps):
                 replay_buffer.pop(0)
             state = next_state
 
-def calculate_reward(state):
-    pass
+def calculate_reward(state, num_thrusters):
+    velocity = state[:6]
+    error = state[-6:]
+    action = state[-(6 + num_thrusters):]
+
+    alpha = 1
+    scales = np.ones((6,))  # TODO: check if this is correct
+    square_error = error @ np.diag(scales) @ error
+    # thruster_usage = np.sum(np.abs(action))
+    # sudden_change_penalty = np.linalg.norm(
+    #     np.mean(self.sliding_window[: min(self.sliding_window_size, self.step_cnt + 1)], axis=0)
+    #     - action
+    # )
+    reward = (
+        np.exp(-1 / (alpha**2) * square_error)
+        # - self.zeta * thruster_usage
+        # - self.xi * sudden_change_penalty
+    )
+    return reward
 
 def get_dynamics():
     robot = "arctos"
