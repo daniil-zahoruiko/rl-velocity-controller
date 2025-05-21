@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 
 class OU:
     def __init__(self, scale, mean, variance):
@@ -12,4 +13,4 @@ class OU:
 
     def sample(self):
         self.x += self.scale * (self.mean - self.x) + np.random.normal(loc=0.0, scale=np.sqrt(self.variance), size = self.mean.shape)
-        return self.x
+        return torch.from_numpy(self.x)
