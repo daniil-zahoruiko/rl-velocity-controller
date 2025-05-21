@@ -33,5 +33,5 @@ class CriticNetwork(nn.Module):
         )
 
     def forward(self, x):
-        out = self.linear(x[:self.num_thrusters])
-        return self.stack(torch.cat(out, x[self.num_thrusters:]))
+        out = self.linear(x[:-self.num_thrusters])
+        return self.stack(torch.cat((out, x[-self.num_thrusters:])))
