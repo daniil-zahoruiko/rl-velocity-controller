@@ -95,7 +95,7 @@ def get_dynamics():
     thruster_taus = np.array([0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2], dtype=np.float64)
 
     # random noise added to the velocity
-    velocity_noise = np.array([0.1, 0.1, 0.1, 0.2, 0.2, 0.2], dtype=np.float64)
+    velocity_noise = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float64)
     water_level: float = 0.0
 
     dynamics = Dynamics(
@@ -124,7 +124,7 @@ def get_dynamics():
 
 class PoolEnvTrain(gym.Env):
 
-    def __init__(self, max_steps=700, lambda_=1, zeta=0.05, xi=0.2, n_sim_steps_per_action=10):
+    def __init__(self, max_steps=700, lambda_=1, zeta=0.1, xi=1, n_sim_steps_per_action=1):
         self.period = 1 / 100
         # self.scheduler = BackgroundScheduler()
         # self.job = None
@@ -133,7 +133,7 @@ class PoolEnvTrain(gym.Env):
         self.num_thrusters = 8
         self.max_velocity = np.array([0.5, 0.5, 0.5, 1.0, 1.0, 0.7], dtype=np.float32)
         self.n_sim_steps_per_action = n_sim_steps_per_action
-        self.sliding_window_size = 100
+        self.sliding_window_size = 1
         self.dynamics = None
         self.target_state = np.zeros(6)
         self.lambda_ = lambda_
@@ -145,15 +145,15 @@ class PoolEnvTrain(gym.Env):
                 "velocities": gym.spaces.Box(
                     low=-self.max_velocity, high=self.max_velocity, shape=(6,)
                 ),
-                "errors": gym.spaces.Box(low=-np.inf, high=np.inf, shape=(6,)),
-                # "last_action": gym.spaces.Box(
-                #     low=-np.inf, high=np.inf, shape=(self.num_thrusters,)
-                # ),
+                "errors": gym.spaces.Box(low=-2 * self.max_velocity, high=2 * self.max_velocity, shape=(6,)),
+                "last_action": gym.spaces.Box(
+                    low=-1, high=1, shape=(self.num_thrusters,)
+                ),
             }
         )
 
         # TODO: check if we need to bound the thrust
-        self.action_space = gym.spaces.Box(low=-60, high=60, shape=(self.num_thrusters,))
+        self.action_space = gym.spaces.Box(low=-1, high=1, shape=(self.num_thrusters,))
 
         self.target_state = self.max_velocity / 2
 
@@ -169,54 +169,59 @@ class PoolEnvTrain(gym.Env):
             "velocities": np.array(self.dynamics.velocity, dtype=np.float32),
             "errors": np.array(self.dynamics.velocity, dtype=np.float32)
             - np.array(self.target_state, dtype=np.float32),
-            # "last_action": np.array(self.last_action, dtype=np.float32),
+            "last_action": np.array(self.last_action, dtype=np.float32),
         }
 
-    def _get_reward(self, action):
-        alpha = 1
-        error = self.dynamics.velocity - self.target_state
-        scales = np.ones((6,))  # TODO: check if this is correct
-        square_error = error @ np.diag(scales) @ error
-        thruster_usage = np.sum(np.abs(action))
-        sudden_change_penalty = np.linalg.norm(
-            np.mean(self.sliding_window[: min(self.sliding_window_size, self.step_cnt + 1)], axis=0)
-            - action
-        )
-        reward = (
-            self.lambda_ * np.exp(-1 / (alpha**2) * square_error)
-            - self.zeta * thruster_usage
-            - self.xi * sudden_change_penalty
-        )
-        return reward
+    # def _get_reward(self, action):
+    #     alpha = 1
+    #     error = self.dynamics.velocity - self.target_state
+    #     scales = np.ones((6,))  # TODO: check if this is correct
+    #     square_error = error @ np.diag(scales) @ error
+    #     thruster_usage = np.sum(np.abs(action))
+    #     sudden_change_penalty = np.linalg.norm(
+    #         np.mean(self.sliding_window[: min(self.sliding_window_size, self.step_cnt + 1)], axis=0)
+    #         - action
+    #     )
+    #     reward = (
+    #         self.lambda_ * np.exp(-1 / (alpha**2) * square_error)
+    #         - self.zeta * thruster_usage
+    #         - self.xi * sudden_change_penalty
+    #     )
+    #     print(self.lambda_ * np.exp(-1 / (alpha**2) * square_error))
+    #     print(- self.zeta * thruster_usage)
+    #     print(- self.xi * sudden_change_penalty)
+    #     return reward
 
-    """
+    
     def _get_reward(self, action):
-        # print(action)
-        return -np.linalg.norm(self.dynamics.velocity - self.target_state) - 0.1 * np.linalg.norm(
-            action - self.last_action
-        )
-    """
+        velocity_error = (self.dynamics.velocity - self.target_state) / self.max_velocity
+        reward = -0.1 * np.sum(np.abs(velocity_error)) - 0.05 * np.sum(np.abs(action)) - 0.2 * np.sum(np.abs(action - self.last_action))
+        # print(-0.1*np.sum(np.abs(velocity_error)))
+        # print(-0.05 * np.sum(np.abs(action)))
+        # print(- 0.2 * np.sum(np.abs(action - self.last_action)))
+        # print()
+        return reward
+    
 
     def _get_info(self):
         # do we have any auxiliary information?
         return {}
 
     def step(self, action):
-        self.dynamics.target_thrust = action
+        self.dynamics.target_thrust = action * 60
         # print("Action:")
         # print(action)
         self.curr_episode_velocities = np.vstack(
             (self.curr_episode_velocities, self.dynamics.velocity)
         )
 
-        self.curr_episode_thrusts = np.vstack((self.curr_episode_thrusts, action))
+        self.curr_episode_thrusts = np.vstack((self.curr_episode_thrusts, action * 60))
 
         for _ in range(self.n_sim_steps_per_action):
             self.dynamics.update(self.period)
 
         # print("Velocity:")
         # print(self.dynamics.velocity)
-        self.sliding_window[self.step_cnt % self.sliding_window_size] = action
 
         observation = self._get_obs()
         terminated = False
@@ -224,6 +229,7 @@ class PoolEnvTrain(gym.Env):
         reward = self._get_reward(action)
         info = self._get_info()
 
+        self.sliding_window[self.step_cnt % self.sliding_window_size] = action
         self.last_action = action
 
         self.step_cnt += 1
@@ -266,7 +272,7 @@ class PoolEnvTrain(gym.Env):
         self.step_cnt = 0
         self.sliding_window = np.zeros((self.sliding_window_size, self.num_thrusters))
         self.last_action = np.zeros((self.num_thrusters,))
-        self.target_state = np.random.uniform(-self.max_velocity, self.max_velocity)
+        self.target_state = np.array([0.25, 0.25, 0.25, -0.2, 0, 0.3]) # np.random.uniform(-self.max_velocity, self.max_velocity)
         # ask Sergii about setting initial velocities and thrust
         # for i in range(np.random.randint(low=0, high=25)):
         #     self.dynamics.update(0.1)
@@ -296,7 +302,7 @@ class PoolEnvTrain(gym.Env):
         fig, axs = plt.subplots(2, self.num_thrusters // 2)
         axs.flatten()
 
-        thrust_entries = 20
+        thrust_entries = self.max_steps
         x = np.arange(thrust_entries)
         for i, ax in enumerate(axs.flat):
             ax.plot(x, self.last_episode["thrusts"][-thrust_entries:, i])
