@@ -5,6 +5,8 @@ import numpy as np
 import torch
 import random
 
+torch.autograd.set_detect_anomaly(True)
+
 def train(episodes, episode_steps):
     num_thrusters = 8
     max_velocity = np.array([0.5, 0.5, 0.5, 1.0, 1.0, 0.7], dtype=np.float32)
@@ -16,10 +18,10 @@ def train(episodes, episode_steps):
     N=2
     replay_buffer = []
 
-    actor = ActorNetwork(num_thrusters=num_thrusters)
-    critic = CriticNetwork(num_thrusters=num_thrusters)
-    target_actor = ActorNetwork(num_thrusters=num_thrusters)
-    target_critic = CriticNetwork(num_thrusters=num_thrusters)
+    actor = ActorNetwork(num_thrusters=num_thrusters).to('cuda')
+    critic = CriticNetwork(num_thrusters=num_thrusters).to('cuda')
+    target_actor = ActorNetwork(num_thrusters=num_thrusters).to('cuda')
+    target_critic = CriticNetwork(num_thrusters=num_thrusters).to('cuda')
 
     critic_loss_fn = torch.nn.MSELoss()
     critic_optimizer = torch.optim.Adam(critic.parameters())
@@ -32,32 +34,31 @@ def train(episodes, episode_steps):
         noise.reset()
         dynamics = get_dynamics()
 
-        target = torch.from_numpy(np.random.uniform(-max_velocity, max_velocity)).to(torch.float32)
+        target = torch.from_numpy(np.random.uniform(-max_velocity, max_velocity)).to(torch.float32).to('cuda')
         # state is velocities, accelerations, last action, errors 
         state = np.zeros(shape=(18 + num_thrusters, ), dtype=np.float32)
-        state[-6:] = np.copy(target)
-        state = torch.from_numpy(state)
+        state[-6:] = np.copy(target.cpu())
+        state = torch.from_numpy(state).to('cuda')
         for t in range(episode_steps):
-            action = actor(state) + noise.sample()
-
-            dynamics.target_thrust = action.detach().numpy()
-            dynamics.update(period)
+            predicted_action = actor(state)
 
             if len(replay_buffer) > min_buf_size:
                 transitions = random.sample(replay_buffer, N)
-                targets = torch.tensor([])
-                outputs = torch.tensor([])
+                targets = torch.tensor([], requires_grad=True).to('cuda')
+                outputs = torch.tensor([], requires_grad=True).to('cuda')
                 for transition in transitions:
                     next_action = target_actor(transition[3])
-                    torch.concatenate((targets, transition[2] + gamma * target_critic(torch.concatenate((transition[3], next_action)))))
-                    torch.concatenate((outputs, critic(torch.concatenate((transition[0], transition[1])))))
+                    target_val = transition[2] + gamma * target_critic(torch.cat((transition[3], next_action)))
+                    output_val = critic(torch.cat((transition[0], transition[1])))
+                    targets = torch.cat((targets, target_val)).to('cuda')
+                    outputs = torch.cat((outputs, output_val)).to('cuda')
 
                 critic_loss = critic_loss_fn(outputs, targets)
                 critic_optimizer.zero_grad()
                 critic_loss.backward()
                 critic_optimizer.step()
 
-                actor_loss = -critic(torch.concatenate((state, actor(state))))
+                actor_loss = -critic(torch.cat((state, predicted_action)))
                 actor_optimizer.zero_grad()
                 actor_loss.backward()
                 actor_optimizer.step()
@@ -69,13 +70,21 @@ def train(episodes, episode_steps):
                 soft_update(target_actor, actor)
                 soft_update(target_critic, critic)
 
+            
+            action = predicted_action.detach() + noise.sample().to('cuda')
 
-            velocity = torch.from_numpy(dynamics.velocity).to(torch.float32)
-            next_state = torch.concatenate([velocity, torch.from_numpy(dynamics.acceleration).to(torch.float32), action, target - velocity])
-            replay_buffer.append((state.detach().numpy(), action.detach().numpy(), calculate_reward(next_state, num_thrusters), next_state))
+            dynamics.target_thrust = action.cpu().numpy()
+            dynamics.update(period)
+
+            velocity = torch.from_numpy(dynamics.velocity).to(torch.float32).to('cuda')
+            next_state = torch.concatenate([velocity, torch.from_numpy(dynamics.acceleration).to(torch.float32).to('cuda'), action, target - velocity])
+            replay_buffer.append((state, action, calculate_reward(next_state, num_thrusters), next_state))
             if len(replay_buffer) > max_buf_size:
                 replay_buffer.pop(0)
             state = next_state
+
+        print(state[:6]) 
+        print(target)       
 
 def calculate_reward(state, num_thrusters):
     velocity = state[:6]
@@ -83,7 +92,7 @@ def calculate_reward(state, num_thrusters):
     action = state[-(6 + num_thrusters):]
 
     alpha = 1
-    scales = torch.ones((6,))  # TODO: check if this is correct
+    scales = torch.ones((6,)).to('cuda')  # TODO: check if this is correct
     square_error = error @ torch.diag(scales) @ error
     # thruster_usage = np.sum(np.abs(action))
     # sudden_change_penalty = np.linalg.norm(
