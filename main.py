@@ -55,11 +55,11 @@ class PolicyCallback(BaseCallback):
 
 def train():
     env = gym.make("pool_train")
-    vec_env = VecNormalize(
-        DummyVecEnv([lambda: env]), norm_obs=True, norm_reward=True, clip_reward=1.0
-    )
+    # vec_env = VecNormalize(
+    #     DummyVecEnv([lambda: env]), norm_obs=True, norm_reward=True, clip_reward=1.0
+    # )
     policy_kwargs = dict(activation_fn=torch.nn.ReLU, net_arch={'pi': [600, 400, 300], 'qf': [600, 400, 300]})
-    action_noise = OrnsteinUhlenbeckActionNoise(mean=np.zeros(8, ), sigma=1.0, theta=0.3)
+    # action_noise = OrnsteinUhlenbeckActionNoise(mean=np.zeros(8, ), sigma=1.0, theta=0.3)
     model = DDPG(
         "MultiInputPolicy",
         env,
