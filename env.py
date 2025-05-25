@@ -294,12 +294,18 @@ class PoolEnvTrain(gym.Env):
 
         fig, axs = plt.subplots(2, 3)
         x = np.arange(self.last_episode["velocities"].shape[0])
+        titles = ["Surge", "Sway", "Heave", "Roll", "Pitch", "Yaw"]
 
         for i, ax in enumerate(axs.flat):
-            ax.plot(x, self.last_episode["velocities"][:, i])
-            ax.axhline(self.last_episode["target"][i], color="r")
+            ax.plot(x, self.last_episode["velocities"][:, i], label="Velocity")
+            ax.axhline(self.last_episode["target"][i], color="r", linestyle="--", label="Target",)
             ax.set_ylim([-1, 1])
+            ax.set_title(titles[i])
 
+        handles, labels = axs.flat[0].get_legend_handles_labels()
+        fig.legend(handles, labels) 
+
+        fig.tight_layout(rect=[0, 0, 1, 0.9])
         plt.savefig(os.path.join(target_vs_velocity_path, f"plot{n}.png"))
 
         fig, axs = plt.subplots(2, self.num_thrusters // 2)
@@ -310,5 +316,7 @@ class PoolEnvTrain(gym.Env):
         for i, ax in enumerate(axs.flat):
             ax.plot(x, self.last_episode["thrusts"][-thrust_entries:, i])
             ax.set_ylim([-60, 60])
-
+            ax.set_title(f"Thrust {i}")
+        
+        fig.tight_layout()
         plt.savefig(os.path.join(thrust_path, f"plot{n}.png"))
