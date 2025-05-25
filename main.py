@@ -11,7 +11,8 @@ from stable_baselines3 import PPO, SAC, DDPG
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList, EveryNTimesteps
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from stable_baselines3.common.noise import OrnsteinUhlenbeckActionNoise
-
+from stable_baselines3.common.evaluation import evaluate_policy
+from stable_baselines3.common.monitor import Monitor
 
 
 register(
@@ -53,25 +54,32 @@ class PolicyCallback(BaseCallback):
 """
 
 
+def linear_schedule(initial_value: float, final_value: float):
+    def func(progress_remaining: float) -> float:
+        return progress_remaining * (initial_value - final_value) + final_value
+
+    return func
+
 def train():
     env = gym.make("pool_train")
-    # vec_env = VecNormalize(
-    #     DummyVecEnv([lambda: env]), norm_obs=True, norm_reward=True, clip_reward=1.0
-    # )
+    vec_env = VecNormalize(
+        DummyVecEnv([lambda: env]), norm_obs=True, norm_reward=False
+    )
     policy_kwargs = dict(activation_fn=torch.nn.ReLU, net_arch={'pi': [600, 400, 300], 'qf': [600, 400, 300]})
     # action_noise = OrnsteinUhlenbeckActionNoise(mean=np.zeros(8, ), sigma=1.0, theta=0.3)
-    model = DDPG(
+    model = SAC(
         "MultiInputPolicy",
         env,
         # action_noise=action_noise,
         verbose=1,
+        learning_rate=linear_schedule(0.003, 0.0001),
         # tensorboard_log="./ppo_tensorboard/",
         policy_kwargs=policy_kwargs,
     )
     print(model.policy)
 
     total_timesteps = 350_000
-    plot_callback = EveryNTimesteps(n_steps=total_timesteps // 10, callback=PlotCallback())
+    plot_callback = EveryNTimesteps(n_steps=total_timesteps // 20, callback=PlotCallback())
     # policy_callback = EveryNTimesteps(n_steps=total_timesteps // 1000, callback=PolicyCallback())
 
     # Combine them in a list
@@ -79,7 +87,7 @@ def train():
 
     # Start training
     model.learn(total_timesteps=total_timesteps, callback=callback_list)
-    env.close()
+    model.save("model.zip")
 
 
 # from train import train
