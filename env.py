@@ -96,7 +96,7 @@ def get_dynamics():
 
     # random noise added to the velocity
     velocity_noise = np.array([0.1, 0.1, 0.1, 0.2, 0.2, 0.2], dtype=np.float64)
-    water_level: float = 0.0
+    water_level: float = -1000.0
 
     dynamics = Dynamics(
         gravity,
@@ -195,7 +195,7 @@ class PoolEnvTrain(gym.Env):
     
     def _get_reward(self, action):
         velocity_error = (self.dynamics.velocity - self.target_state) / self.max_velocity
-        reward = -0.4 * np.sum(np.abs(velocity_error)) - 0.05 * np.sum(np.abs(action)) - 0.2 * np.sum(np.abs(action - self.last_action))
+        reward = -0.5 * np.sum(np.abs(velocity_error)) - 0.05 * np.sum(np.abs(action)) - 0.2 * np.sum(np.abs(action - self.last_action))
         # print(-0.1*np.sum(np.abs(velocity_error)))
         # print(-0.05 * np.sum(np.abs(action)))
         # print(- 0.2 * np.sum(np.abs(action - self.last_action)))
@@ -273,8 +273,18 @@ class PoolEnvTrain(gym.Env):
         self.step_cnt = 0
         self.sliding_window = np.zeros((self.sliding_window_size, self.num_thrusters))
         self.last_action = np.zeros((self.num_thrusters,))
-        velocity_phase = (self.total_step_cnt * 5) // self.total_timesteps + 1
-        self.target_state = np.random.uniform([-0.5, -0.5, 0, 0, 0, -0.5], [0.5, 0.5, 0.5, 0, 0, 0.5])
+        self.target_state = np.random.uniform(-self.max_velocity, self.max_velocity)
+        if self.total_step_cnt < self.total_timesteps // 5:
+            self.target_state[3:] = 0.0
+        elif self.total_step_cnt < 2 * self.total_timesteps // 5:
+            self.target_state[3:] = 0.0
+            idx = np.random.choice([3, 4, 5], size=1)
+            self.target_state[idx] = np.random.uniform(-0.1, 0.1)
+        elif self.total_step_cnt < 3 * self.total_timesteps // 5:
+            self.target_state[3:] = np.random.uniform(-0.1, 0.1)
+        else:
+            idx = np.random.choice([3, 4, 5], size=2, replace=False)
+            self.target_state[idx] = np.random.uniform(-0.1, 0.1)
         # ask Sergii about setting initial velocities and thrust
         # for i in range(np.random.randint(low=0, high=25)):
         #     self.dynamics.update(0.1)
