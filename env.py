@@ -116,7 +116,7 @@ def get_dynamics():
         thruster_directions,
         thruster_taus,
         velocity_noise,
-        np.zeros(6),  # TODO: Check if this is correct
+        np.zeros(6),
         np.zeros(6),
     )
     return dynamics
@@ -126,8 +126,6 @@ class PoolEnvTrain(gym.Env):
 
     def __init__(self, max_steps=400, lambda_=1, zeta=0.1, xi=1, n_sim_steps_per_action=1, total_timesteps=350_000):
         self.period = 1 / 100
-        # self.scheduler = BackgroundScheduler()
-        # self.job = None
         self.max_steps = max_steps
         self.total_timesteps = total_timesteps
         self.step_cnt = 0
@@ -154,7 +152,6 @@ class PoolEnvTrain(gym.Env):
             }
         )
 
-        # TODO: check if we need to bound the thrust
         self.action_space = gym.spaces.Box(low=-1, high=1, shape=(self.num_thrusters,))
 
         self.last_episode = {}
@@ -196,21 +193,15 @@ class PoolEnvTrain(gym.Env):
     def _get_reward(self, action):
         velocity_error = (self.dynamics.velocity - self.target_state) / self.max_velocity
         reward = -0.5 * np.sum(np.abs(velocity_error)) - 0.05 * np.sum(np.abs(action)) - 0.2 * np.sum(np.abs(action - self.last_action))
-        # print(-0.1*np.sum(np.abs(velocity_error)))
-        # print(-0.05 * np.sum(np.abs(action)))
-        # print(- 0.2 * np.sum(np.abs(action - self.last_action)))
-        # print()
         return reward
     
 
     def _get_info(self):
-        # do we have any auxiliary information?
         return {}
 
     def step(self, action):
         self.dynamics.target_thrust = action * 60
-        # print("Action:")
-        # print(action)
+
         self.curr_episode_velocities = np.vstack(
             (self.curr_episode_velocities, self.dynamics.velocity)
         )
@@ -219,9 +210,6 @@ class PoolEnvTrain(gym.Env):
 
         for _ in range(self.n_sim_steps_per_action):
             self.dynamics.update(self.period)
-
-        # print("Velocity:")
-        # print(self.dynamics.velocity)
 
         observation = self._get_obs()
         terminated = False
@@ -237,33 +225,7 @@ class PoolEnvTrain(gym.Env):
 
         return observation, reward, terminated, truncated, info
 
-    """
     def reset(self, seed=None, options=None):
-        super().reset(seed=seed)
-
-        if self.job:
-            self.scheduler.remove_job(self.job.id)
-        self.init_dynamics()
-        # ask Sergii about setting initial velocities and thrust
-        for i in range(np.random.randint(low=0, high=25)):
-            self.dynamics.update(0.1)
-
-        # ideally should be the time difference between previous and current updates
-        self.job = self.scheduler.add_job(
-            lambda _: self.dynamics.update(self.period), "interval", seconds=self.period
-        )
-
-        self.target_state = np.random.uniform(np.zeros(6), self.max_velocity)
-    """
-
-    def reset(self, seed=None, options=None):
-        """
-        if self.dynamics:
-            print("-" * 20)
-            print(self.target_state)
-            print(self.dynamics.velocity)
-            print("-" * 20)
-        """
         super().reset(seed=seed)
         self.last_episode["target"] = self.target_state
         self.last_episode["velocities"] = self.curr_episode_velocities
