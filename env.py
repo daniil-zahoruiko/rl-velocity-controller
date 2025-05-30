@@ -124,7 +124,7 @@ def get_dynamics():
 
 class PoolEnvTrain(gym.Env):
 
-    def __init__(self, max_steps=400, lambda_=1, zeta=0.1, xi=1, n_sim_steps_per_action=1, total_timesteps=350_000):
+    def __init__(self, max_steps=400, lambda_=0.5, zeta=0.05, xi=0.2, n_sim_steps_per_action=1, total_timesteps=350_000):
         self.period = 1 / 100
         self.max_steps = max_steps
         self.total_timesteps = total_timesteps
@@ -169,30 +169,10 @@ class PoolEnvTrain(gym.Env):
             "last_action": np.array(self.last_action, dtype=np.float32)
         }
 
-    # def _get_reward(self, action):
-    #     alpha = 1
-    #     error = self.dynamics.velocity - self.target_state
-    #     scales = np.ones((6,))  # TODO: check if this is correct
-    #     square_error = error @ np.diag(scales) @ error
-    #     thruster_usage = np.sum(np.abs(action))
-    #     sudden_change_penalty = np.linalg.norm(
-    #         np.mean(self.sliding_window[: min(self.sliding_window_size, self.step_cnt + 1)], axis=0)
-    #         - action
-    #     )
-    #     reward = (
-    #         self.lambda_ * np.exp(-1 / (alpha**2) * square_error)
-    #         - self.zeta * thruster_usage
-    #         - self.xi * sudden_change_penalty
-    #     )
-    #     print(self.lambda_ * np.exp(-1 / (alpha**2) * square_error))
-    #     print(- self.zeta * thruster_usage)
-    #     print(- self.xi * sudden_change_penalty)
-    #     return reward
-
     
     def _get_reward(self, action):
         velocity_error = (self.dynamics.velocity - self.target_state) / self.max_velocity
-        reward = -0.5 * np.sum(np.abs(velocity_error)) - 0.05 * np.sum(np.abs(action)) - 0.2 * np.sum(np.abs(action - self.last_action))
+        reward = -self.lambda_ * np.sum(np.abs(velocity_error)) - self.zeta * np.sum(np.abs(action)) - self.xi * np.sum(np.abs(action - self.last_action))
         return reward
     
 
@@ -247,9 +227,6 @@ class PoolEnvTrain(gym.Env):
         else:
             idx = np.random.choice([3, 4, 5], size=2, replace=False)
             self.target_state[idx] = np.random.uniform(-0.1, 0.1)
-        # ask Sergii about setting initial velocities and thrust
-        # for i in range(np.random.randint(low=0, high=25)):
-        #     self.dynamics.update(0.1)
 
         obs = self._get_obs()
         return obs, self._get_info()
