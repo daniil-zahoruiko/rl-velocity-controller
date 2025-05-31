@@ -180,13 +180,14 @@ class PoolEnvTrain(gym.Env):
         return {}
 
     def step(self, action):
-        self.dynamics.target_thrust = action * 60
+        thrust = action * 60
+        self.dynamics.target_thrust = thrust
 
         self.curr_episode_velocities = np.vstack(
             (self.curr_episode_velocities, self.dynamics.velocity)
         )
 
-        self.curr_episode_thrusts = np.vstack((self.curr_episode_thrusts, action * 60))
+        self.curr_episode_thrusts = np.vstack((self.curr_episode_thrusts, thrust))
 
         for _ in range(self.n_sim_steps_per_action):
             self.dynamics.update(self.period)
@@ -227,6 +228,10 @@ class PoolEnvTrain(gym.Env):
         else:
             idx = np.random.choice([3, 4, 5], size=2, replace=False)
             self.target_state[idx] = np.random.uniform(-0.1, 0.1)
+            if self.total_step_cnt >= 4 * self.total_timesteps // 5:
+                self.dynamics.velocity = np.random.uniform(-self.max_velocity, self.max_velocity)
+                idx = np.random.choice([3, 4, 5], size=2, replace=False)
+                self.dynamics.velocity[idx] = np.random.uniform(-0.1, 0.1)
 
         obs = self._get_obs()
         return obs, self._get_info()
