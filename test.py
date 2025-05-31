@@ -10,7 +10,7 @@ register(
     entry_point="env:PoolEnvTrain",
 )
 
-model = SAC.load("model.zip")
+model = SAC.load("model_good.zip")
 env   = gym.make("pool_train")
 
 n_episodes = 10
@@ -26,9 +26,8 @@ for ep in range(n_episodes):
         ep_reward += r
     print(f"Episode {ep} reward = {ep_reward:.3f}")
     rewards.append(ep_reward)
-
-
-env.unwrapped.plot_last_episode(21)
+    if ep > 0:
+        env.unwrapped.plot_last_episode(f'_test_{ep}')
 
 print(f"\nMean reward over {n_episodes} eps = {sum(rewards)/n_episodes:.3f}")
 env.close()
