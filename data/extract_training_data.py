@@ -1,8 +1,19 @@
 import argparse
 
 import rosbag2_py
+from rclpy.serialization import deserialize_message
 
-TOPIC_NAMES = ["/dynamics/state", "/dynamics/target", "/thrusters/target_thrust"]
+from at_messages.msg import DynamicsState, TargetThrust
+
+STATE_TOPIC = "/dynamics/state"
+TARGET_STATE_TOPIC = "/dynamics/target"
+TARGET_THRUST_TOPIC = "/thrusters/target_thrust"
+TOPIC_NAMES = [STATE_TOPIC, TARGET_STATE_TOPIC, TARGET_THRUST_TOPIC]
+TOPIC_TYPES = {
+    STATE_TOPIC: DynamicsState,
+    TARGET_STATE_TOPIC: DynamicsState,
+    TARGET_THRUST_TOPIC: TargetThrust,
+}
 
 
 def main():
@@ -21,9 +32,17 @@ def main():
         rosbag2_py.ConverterOptions("", "cdr"),
     )
 
-    topic_types = reader.get_all_topics_and_types()
-    type_map = {topic.name: topic.type for topic in topic_types}
-    print(type_map)
+    # cnt to limit messages for testing
+    cnt = 0
+    while reader.has_next() and cnt <= 30:
+        topic_name, data, timestamp = reader.read_next()
+
+        if topic_name not in TOPIC_NAMES:
+            continue
+
+        msg = deserialize_message(data, TOPIC_TYPES[topic_name])
+        print(msg)
+        cnt += 1
 
 
 if __name__ == "__main__":
