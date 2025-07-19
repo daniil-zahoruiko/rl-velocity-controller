@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 
 import rosbag2_py
@@ -6,27 +7,52 @@ from rclpy.serialization import deserialize_message
 
 from at_messages.msg import DynamicsState, TargetThrust
 
-STATE_TOPIC = "/dynamics/state"
-TARGET_STATE_TOPIC = "/dynamics/target"
-TARGET_THRUST_TOPIC = "/thrusters/target_thrust"
-TOPIC_NAMES = [STATE_TOPIC, TARGET_STATE_TOPIC, TARGET_THRUST_TOPIC]
-TOPIC_TYPES = {
-    STATE_TOPIC: DynamicsState,
-    TARGET_STATE_TOPIC: DynamicsState,
-    TARGET_THRUST_TOPIC: TargetThrust,
-}
-TOPIC_OUTPUTS = {
-    STATE_TOPIC: "states.json",
-    TARGET_STATE_TOPIC: "target_states.json",
-    TARGET_THRUST_TOPIC: "actions.json",
-}
+
+class RecordedTopic:
+    def __init__(self, name, type, output, data_func):
+        self.name = name
+        self.type = type
+        self.output = output
+        self.data_func = data_func
+        self.recorded_data = []
+
+    def save_data(self):
+        with open(self.output, "w") as f:
+            f.write("[\n")
+            for d in self.recorded_data:
+                f.write(json.dumps(d))
+                if d == self.recorded_data[-1]:
+                    f.write("\n")
+                    break
+                f.write(",\n")
+
+            f.write("]")
+
+
+STATE_TOPIC = RecordedTopic(
+    "/dynamics/state", DynamicsState, "states.json", lambda x: {"velocity": x.velocity.tolist()}
+)
+TARGET_STATE_TOPIC = RecordedTopic(
+    "/dynamics/target",
+    DynamicsState,
+    "target_states.json",
+    lambda x: {"velocity": x.velocity.tolist()},
+)
+TARGET_THRUST_TOPIC = RecordedTopic(
+    "/thrusters/target_thrust",
+    TargetThrust,
+    "actions.json",
+    lambda x: {"thrust": x.target_thrust.tolist()},
+)
+
+TOPICS = [STATE_TOPIC, TARGET_STATE_TOPIC, TARGET_THRUST_TOPIC]
 
 
 def create_files():
-    for file in TOPIC_OUTPUTS.values():
-        if os.path.exists(file):
-            os.remove(file)
-        os.mknod(file)
+    for topic in TOPICS:
+        if os.path.exists(topic.output):
+            os.remove(topic.output)
+        os.mknod(topic.output)
 
 
 def main():
@@ -45,18 +71,24 @@ def main():
         rosbag2_py.ConverterOptions("", "cdr"),
     )
 
-    create_files()
-
+    topic_mapping = dict([(topic.name, topic) for topic in TOPICS])
     # cnt to limit messages for testing
     cnt = 0
     while reader.has_next() and cnt <= 30:
         topic_name, data, timestamp = reader.read_next()
 
-        if topic_name not in TOPIC_NAMES:
+        if topic_name not in topic_mapping.keys():
             continue
 
-        msg = deserialize_message(data, TOPIC_TYPES[topic_name])
+        msg = deserialize_message(data, topic_mapping[topic_name].type)
+        topic_mapping[topic_name].recorded_data.append(
+            {"timestamp": timestamp, "data": topic_mapping[topic_name].data_func(msg)}
+        )
         cnt += 1
+
+    create_files()
+    for topic in TOPICS:
+        topic.save_data()
 
 
 if __name__ == "__main__":
