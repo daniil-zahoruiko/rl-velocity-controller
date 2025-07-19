@@ -1,4 +1,5 @@
 import argparse
+import os
 
 import rosbag2_py
 from rclpy.serialization import deserialize_message
@@ -14,6 +15,18 @@ TOPIC_TYPES = {
     TARGET_STATE_TOPIC: DynamicsState,
     TARGET_THRUST_TOPIC: TargetThrust,
 }
+TOPIC_OUTPUTS = {
+    STATE_TOPIC: "states.json",
+    TARGET_STATE_TOPIC: "target_states.json",
+    TARGET_THRUST_TOPIC: "actions.json",
+}
+
+
+def create_files():
+    for file in TOPIC_OUTPUTS.values():
+        if os.path.exists(file):
+            os.remove(file)
+        os.mknod(file)
 
 
 def main():
@@ -32,6 +45,8 @@ def main():
         rosbag2_py.ConverterOptions("", "cdr"),
     )
 
+    create_files()
+
     # cnt to limit messages for testing
     cnt = 0
     while reader.has_next() and cnt <= 30:
@@ -41,7 +56,6 @@ def main():
             continue
 
         msg = deserialize_message(data, TOPIC_TYPES[topic_name])
-        print(msg)
         cnt += 1
 
 
