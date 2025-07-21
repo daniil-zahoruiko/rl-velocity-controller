@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 
+import numpy as np
 import rosbag2_py
 from rclpy.serialization import deserialize_message
 
@@ -30,19 +31,22 @@ class RecordedTopic:
 
 
 STATE_TOPIC = RecordedTopic(
-    "/dynamics/state", DynamicsState, "states.json", lambda x: {"velocity": x.velocity.tolist()}
+    "/dynamics/state",
+    DynamicsState,
+    "states.json",
+    lambda x: {"velocity": replace_nans(x.velocity.tolist())},
 )
 TARGET_STATE_TOPIC = RecordedTopic(
     "/dynamics/target",
     DynamicsState,
     "target_states.json",
-    lambda x: {"velocity": x.velocity.tolist()},
+    lambda x: {"velocity": replace_nans(x.velocity.tolist())},
 )
 TARGET_THRUST_TOPIC = RecordedTopic(
     "/thrusters/target_thrust",
     TargetThrust,
     "actions.json",
-    lambda x: {"thrust": x.target_thrust.tolist()},
+    lambda x: {"thrust": replace_nans(x.target_thrust.tolist())},
 )
 
 TOPICS = [STATE_TOPIC, TARGET_STATE_TOPIC, TARGET_THRUST_TOPIC]
@@ -53,6 +57,10 @@ def create_files():
         if os.path.exists(topic.output):
             os.remove(topic.output)
         os.mknod(topic.output)
+
+
+def replace_nans(items):
+    return [None if np.isnan(item) else item for item in items]
 
 
 def main():
@@ -72,9 +80,7 @@ def main():
     )
 
     topic_mapping = dict([(topic.name, topic) for topic in TOPICS])
-    # cnt to limit messages for testing
-    cnt = 0
-    while reader.has_next() and cnt <= 30:
+    while reader.has_next():
         topic_name, data, timestamp = reader.read_next()
 
         if topic_name not in topic_mapping.keys():
@@ -84,7 +90,6 @@ def main():
         topic_mapping[topic_name].recorded_data.append(
             {"timestamp": timestamp, "data": topic_mapping[topic_name].data_func(msg)}
         )
-        cnt += 1
 
     create_files()
     for topic in TOPICS:
