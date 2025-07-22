@@ -40,7 +40,10 @@ TARGET_STATE_TOPIC = RecordedTopic(
     "/dynamics/target",
     DynamicsState,
     "target_states.json",
-    lambda x: {"velocity": replace_nans(x.velocity.tolist())},
+    lambda x: {
+        "velocity": replace_nans(x.velocity.tolist()),
+        "position": replace_nans(x.position.tolist()),
+    },
 )
 TARGET_THRUST_TOPIC = RecordedTopic(
     "/thrusters/target_thrust",
