@@ -1,3 +1,5 @@
+# Author: Sergii Penner
+
 from math import cos, sin, tan
 
 import numpy as np
