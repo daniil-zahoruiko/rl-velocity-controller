@@ -175,3 +175,9 @@ cython_debug/
 
 # ROS 2 bag files
 *.bag
+
+# Trained model
+model*.zip
+
+# Plots
+plots/
