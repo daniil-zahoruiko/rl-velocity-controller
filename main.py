@@ -67,7 +67,6 @@ def train():
         # action_noise=action_noise,
         verbose=1,
         learning_rate=linear_schedule(0.003, 0.0001),
-        # tensorboard_log="./ppo_tensorboard/",
         policy_kwargs=policy_kwargs,
     )
     print(model.policy)
