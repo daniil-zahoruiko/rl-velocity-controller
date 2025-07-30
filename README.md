@@ -1,6 +1,6 @@
 # Reinforcement Learning Velocity Controller
 
-This project implements a reinforcement learning (RL)-based velocity controller using **Stable-Baselines3** and a **custom OpenAI Gym environment** for an Autonomous Underwater Vehicle with 6 degrees of freedom. The controller is currently trained and evaluated **in simulation only**. See simulation results below. Deployment on a **real robot** is a work in progress.
+This project implements a reinforcement learning (RL)-based velocity controller using **Stable-Baselines3** and a **custom OpenAI Gym environment** for an Autonomous Underwater Vehicle with 6 degrees of freedom. The controller is currently trained and evaluated **in simulation only**. See simulation results below. Deployment on the **real robot** is a work in progress.
 
 ## 🚀 Overview
 
